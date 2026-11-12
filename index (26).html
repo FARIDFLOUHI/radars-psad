@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar de conformité des PSAD</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1f2933; --muted:#52606d; --grid:#d9dee3; --sel:#1f5fbf; --moy:#8a94a0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14181d; --fg:#e8ecef; --muted:#a3adb8; --grid:#3a434c; --sel:#6ea8ff; --moy:#9aa5b1; } }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px system-ui, "Segoe UI", sans-serif; }
+  #wrap { display:flex; flex-direction:column; height:100%; padding:8px 12px; box-sizing:border-box; }
+  h1 { font-size:15px; margin:0 0 4px; }
+  #chartbox { position:relative; flex:1 1 auto; min-height:0; }
+  #msg { color:var(--muted); font-size:12px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1 id="titre"></h1>
+  <div id="chartbox"><canvas id="c"></canvas></div>
+  <div id="msg"></div>
+</div>
+<script src="chart.umd.js"></script>
+<script>
+// Radars : paramètre d'adresse ?radar=1..5 ou ?radar=S (synthèse) ; &mode=moyenne pour n'afficher que la moyenne.
+const RADARS = {
+  "1": { titre: "Co-pilotage et animation", pct: false, axes: [
+    ["P_B1","Co-pilotage CIO et ML"],["P_B2","Répartition des tâches"],["P_B5","Plan d'actions"],
+    ["P_B6","Initiatives d'amélioration"],["P_B7","Actions de communication"]]},
+  "2": { titre: "Instances : cercles 1 et 2", pct: false, axes: [
+    ["P_C1","Calendrier du cercle 1"],["P_C2","Réunions du cercle 1"],["P_C3","Membres du noyau présents"],
+    ["P_C5","Réunions en deux temps"],["P_C6","Situations hors SIEI étudiées"],["P_D1","Réunions du cercle 2"],
+    ["P_D2","Calendrier du cercle 2"],["P_D4","Cartographie des acteurs"],["P_D6","Partenaires signataires"]]},
+  "3": { titre: "Repérage : SIEI et hors SIEI", pct: false, axes: [
+    ["P_E1","Accès Rio suivi formés"],["P_E2","Filtres code postal"],["P_E3","Affectation sous 15 jours"],
+    ["P_E4","Transferts de fiches"],["P_E5","Nettoyage des listes"],["P_F1","Circuit de signalement"],
+    ["P_F2","Fiche de signalement remise"],["P_F3","Signalements FOQUALE"],["P_F4","Dossier simplifié"]]},
+  "4": { titre: "Contact, diagnostic et solutions", pct: false, axes: [
+    ["P_G1","Procédure de prise de contact"],["P_G2","Répartition de la prise de contact"],["P_G3","Rescolarisation en priorité"],
+    ["P_G6","Jeunes injoignables"],["P_G7","Référent de parcours"],["P_G8","Entretien diagnostic"],
+    ["P_H1","Cartographie des solutions"],["P_H3","Remontée des solutions"],["P_H5","Décision collective"]]},
+  "5": { titre: "Suivi et confidentialité", pct: false, axes: [
+    ["P_I1","Mise à jour Rio suivi"],["P_I2","Recontact après rupture"],["P_I3","Publics spécifiques"],
+    ["P_I4","Obligation de formation"],["P_I6","Remontée des indicateurs"],["P_J1","Engagement signé"],
+    ["P_J2","Rappel en réunion"],["P_J3","Dialogue avec les familles"],["P_J4","Information en cas de refus"]]},
+  "S": { titre: "Synthèse : les 9 thèmes", pct: true, axes: [
+    ["Score_B","Co-pilotage"],["Score_C","Cercle 1"],["Score_D","Cercle 2 et partenariats"],["Score_E","Repérage SIEI"],
+    ["Score_F","Repérage hors SIEI"],["Score_G","Contact et diagnostic"],["Score_H","Solutions"],
+    ["Score_I","Suivi des parcours"],["Score_J","Confidentialité"]]}
+};
+
+const params = new URLSearchParams(location.search);
+const cfg = RADARS[(params.get("radar") || "S").toUpperCase()] || RADARS["S"];
+const modeMoyenne = (params.get("mode") || "") === "moyenne";
+document.getElementById("titre").textContent = params.get("titre") || cfg.titre;
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function lignes(txt) {              // coupe les libellés longs en plusieurs lignes
+  const mots = txt.split(" "), out = []; let cur = "";
+  for (const m of mots) { if ((cur + " " + m).trim().length > 16 && cur) { out.push(cur); cur = m; } else cur = (cur + " " + m).trim(); }
+  if (cur) out.push(cur); return out;
+}
+const toPct = v => (v === null || v === undefined || v === "" || isNaN(Number(v))) ? null : (cfg.pct ? Number(v) : Number(v) * 50);
+
+let selected = null, rows = [], chart = null;
+
+function moyenne() {
+  const valides = rows.filter(r => r.statut === "Validé");
+  if (valides.length < (modeMoyenne ? 1 : 2)) return { data: null, n: valides.length };
+  const data = cfg.axes.map(([col]) => {
+    const v = valides.map(r => toPct(r[col])).filter(x => x !== null);
+    return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
+  });
+  return { data, n: valides.length };
+}
+
+function draw() {
+  const labels = cfg.axes.map(([, l]) => lignes(l));
+  const sets = [];
+  const moy = moyenne();
+  if (!modeMoyenne && selected && selected.id) {
+    sets.push({ label: "Sélection", data: cfg.axes.map(([c]) => toPct(selected[c])),
+      borderColor: css("--sel"), backgroundColor: css("--sel") + "33", pointBackgroundColor: css("--sel"), borderWidth: 2.5, pointRadius: 3.5, spanGaps: false });
+  }
+  if (moy.data) {
+    sets.push({ label: "Moyenne des questionnaires validés (" + moy.n + ")", data: moy.data,
+      borderColor: css("--moy"), backgroundColor: "transparent", borderDash: [6, 4], borderWidth: 2, pointRadius: 2, spanGaps: false });
+  }
+  const cfgChart = { type: "radar", data: { labels, datasets: sets },
+    options: { responsive: true, maintainAspectRatio: false, animation: false,
+      scales: { r: { min: 0, max: 100, ticks: { stepSize: 25, backdropColor: "transparent", color: css("--muted"), callback: v => v + " %" },
+        grid: { color: css("--grid") }, angleLines: { color: css("--grid") }, pointLabels: { color: css("--fg"), font: { size: 12 } } } },
+      plugins: { legend: { position: "bottom", labels: { color: css("--fg") } },
+        tooltip: { callbacks: { label: c => c.dataset.label + " : " + (c.parsed.r === null ? "pas de donnée" : Math.round(c.parsed.r) + " %") } } } } };
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("c"), cfgChart);
+  const manque = selected && selected.id ? cfg.axes.filter(([c]) => toPct(selected[c]) === null).length : 0;
+  let note = cfg.pct ? "100 % = tous les critères du thème pleinement remplis." : "100 % = critère pleinement rempli (2 points sur 2) ; pour les questions chiffrées, 100 % = seuil atteint.";
+  if (manque) note += " " + manque + " axe(s) sans donnée (non répondu ou « pas de cas »).";
+  document.getElementById("msg").textContent = note;
+}
+
+function start() {
+  grist.ready({ requiredAccess: "read table" });
+  grist.onRecord(r => { selected = r; draw(); });
+  grist.onRecords(rs => { rows = rs || []; draw(); });
+  draw();
+}
+if (window.grist) start();
+else {   // l'API Grist est servie par l'instance Grist qui héberge le document
+  const src = ["https://grist.numerique.gouv.fr/grist-plugin-api.js", "https://docs.getgrist.com/grist-plugin-api.js"];
+  (function load(i) {
+    if (i >= src.length) { document.getElementById("msg").textContent = "Impossible de charger l'API Grist."; return; }
+    const s = document.createElement("script"); s.src = src[i]; s.onload = start; s.onerror = () => load(i + 1);
+    document.head.appendChild(s);
+  })(0);
+}
+</script>
+</body>
+</html>
