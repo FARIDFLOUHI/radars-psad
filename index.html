@@ -12,18 +12,23 @@
   h1 { font-size:15px; margin:0 0 4px; }
   #chartbox { position:relative; flex:1 1 auto; min-height:0; }
   #msg { color:var(--muted); font-size:12px; margin-top:4px; }
+  #tabs { display:none; flex-wrap:wrap; gap:6px; margin:2px 0 6px; }
+  #tabs button { font:inherit; font-size:12px; padding:4px 10px; border:1px solid var(--grid); border-radius:14px; background:transparent; color:var(--fg); cursor:pointer; }
+  #tabs button[aria-pressed="true"] { background:var(--sel); border-color:var(--sel); color:#fff; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <h1 id="titre"></h1>
+  <div id="tabs" role="group" aria-label="Thèmes"></div>
   <div id="sous" style="color:var(--muted);font-size:13px;margin:0 0 4px;min-height:16px"></div>
   <div id="chartbox"><canvas id="c"></canvas></div>
   <div id="msg"></div>
 </div>
 <script src="chart.umd.js"></script>
 <script>
-// Radars : paramètre d'adresse ?radar=1..5 ou ?radar=S (synthèse) ; &mode=moyenne pour n'afficher que la moyenne.
+// Radars : paramètre d'adresse ?radar=1..5 ou ?radar=S (synthèse) ; ?radar=TOUS affiche des onglets (synthèse + 5 radars détaillés) ;
+// &mode=moyenne pour n'afficher que la moyenne.
 const RADARS = {
   "1": { titre: "Co-pilotage et animation", pct: false, axes: [
     ["P_B1","Co-pilotage CIO et ML"],["P_B2","Répartition des tâches"],["P_B5","Plan d'actions"],
@@ -51,9 +56,21 @@ const RADARS = {
 };
 
 const params = new URLSearchParams(location.search);
-const cfg = RADARS[(params.get("radar") || "S").toUpperCase()] || RADARS["S"];
+const radarParam = (params.get("radar") || "S").toUpperCase();
+const MULTI = radarParam === "TOUS";
+let cfg = RADARS[MULTI ? "S" : radarParam] || RADARS["S"];
 const modeMoyenne = (params.get("mode") || "") === "moyenne";
-document.getElementById("titre").textContent = params.get("titre") || cfg.titre;
+function setTitre() { document.getElementById("titre").textContent = (!MULTI && params.get("titre")) || cfg.titre; }
+setTitre();
+if (MULTI) {
+  const tabs = document.getElementById("tabs"); tabs.style.display = "flex";
+  [["S","Synthèse"],["1","Co-pilotage"],["2","Cercles 1 et 2"],["3","Repérage"],["4","Contact et solutions"],["5","Suivi et confidentialité"]].forEach(([k, l]) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = l; b.dataset.k = k;
+    b.setAttribute("aria-pressed", k === "S" ? "true" : "false");
+    b.onclick = () => { cfg = RADARS[k]; tabs.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false")); setTitre(); draw(); };
+    tabs.appendChild(b);
+  });
+}
 
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function lignes(txt) {              // coupe les libellés longs en plusieurs lignes
